@@ -12,7 +12,7 @@ use writer;
 
 use colored::*;
 
-fn thread_func(benchmark_clone: Arc<Mutex<Vec<Box<(Runnable + Sync + Send)>>>>, iterations: i64, base_clone: String) -> Vec<Report> {
+fn thread_func(benchmark_clone: Arc<Mutex<Vec<Box<(Runnable + Sync + Send)>>>>, iterations: i64, base_clone: String, datum: Vec<&str>) -> Vec<Report> {
   let mut global_reports = Vec::new();
 
   for _i in 0..iterations {
@@ -21,6 +21,10 @@ fn thread_func(benchmark_clone: Arc<Mutex<Vec<Box<(Runnable + Sync + Send)>>>>, 
     let mut reports:Vec<Report> = Vec::new();
 
     context.insert("base".to_string(), Yaml::String(base_clone.clone()));
+
+    for data in datum.iter() {
+      println!("An input file: {}", data);
+    }
 
     for item in benchmark_clone.lock().unwrap().iter() {
       item.execute(&mut context, &mut responses, &mut reports);
@@ -38,7 +42,7 @@ fn join<S:ToString> (l: Vec<S>, sep: &str) -> String {
                   )
 }
 
-pub fn execute(benchmark_path: &str, report_path_option: Option<&str>) -> Result<Vec<Vec<Report>>, Vec<Vec<Report>>> {
+pub fn execute(benchmark_path: &str, report_path_option: Option<&str>, datum: Vec<&str>) -> Result<Vec<Vec<Report>>, Vec<Vec<Report>>> {
   let config = config::Config::new(benchmark_path);
   let threads: i64;
   let iterations: i64;
@@ -64,11 +68,12 @@ pub fn execute(benchmark_path: &str, report_path_option: Option<&str>) -> Result
 
   let mut children = vec![];
   let mut list_reports:Vec<Vec<Report>> = vec![];
+  let datum_clone = datum.clone();
 
   let list_mutex = Arc::new(Mutex::new(list));
 
   if let Some(report_path) = report_path_option {
-    let reports = thread_func(list_mutex, iterations, base.to_owned());
+    let reports = thread_func(list_mutex, iterations, base.to_owned(), datum_clone);
 
     writer::write_file(report_path, join(reports, ""));
 
@@ -78,7 +83,7 @@ pub fn execute(benchmark_path: &str, report_path_option: Option<&str>) -> Result
       let base_clone = base.to_owned();
       let list_clone = Arc::clone(&list_mutex);
 
-      children.push(thread::spawn(move || thread_func(list_clone, iterations, base_clone)));
+      children.push(thread::spawn(move || thread_func(list_clone, iterations, base_clone, datum_clone)));
     }
 
     for child in children {

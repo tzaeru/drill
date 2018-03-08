@@ -39,6 +39,13 @@ fn main() {
                                   .help("Shows request statistics")
                                   .takes_value(false)
                                   .conflicts_with("compare"))
+                      .arg(Arg::with_name("data")
+                                  .help("Assign variables used in the benchmark (ex: foo=2)")
+                                  .long("data")
+                                  .short("d")
+                                  .multiple(true)
+                                  .required(true)
+                                  .takes_value(true))
                       .arg(Arg::with_name("report")
                                   .short("r")
                                   .long("report")
@@ -64,9 +71,10 @@ fn main() {
   let stats_option = matches.is_present("stats");
   let compare_path_option = matches.value_of("compare");
   let threshold_option = matches.value_of("threshold");
+  let datum = matches.values_of("data").unwrap().collect::<Vec<_>>();
 
   let begin = time::precise_time_s();
-  let list_reports_result = benchmark::execute(benchmark_file, report_path_option);
+  let list_reports_result = benchmark::execute(benchmark_file, report_path_option, datum);
   let duration = time::precise_time_s() - begin;
 
   match list_reports_result {
