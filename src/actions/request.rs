@@ -67,7 +67,10 @@ impl Request {
   }
 
   fn send_request(&self, context: &mut HashMap<String, Yaml>, responses: &mut HashMap<String, serde_json::Value>) -> (Response, f64) {
-    let ssl = NativeTlsClient::new().unwrap();
+    let mut ssl = NativeTlsClient::new().unwrap();
+
+    ssl.danger_disable_hostname_verification(true);
+
     let connector = HttpsConnector::new(ssl);
     let client = Client::with_connector(connector);
 
