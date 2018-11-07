@@ -6,11 +6,17 @@ use colored::*;
 use serde_json;
 use time;
 
-use hyper::client::{Client, Response};
-use hyper::net::HttpsConnector;
-use hyper_native_tls::NativeTlsClient;
-use hyper::header::{UserAgent, Headers, Cookie, SetCookie};
-use hyper::method::Method;
+use hyper::client::{Client};
+use hyper::Response;
+use tokio_tls::TlsConnector;
+use native_tls::TlsConnector as NativeTlsConnector;
+use hyper::header::HeaderName;
+use hyper::Method;
+use hyper::Body;
+use hyper::http;
+use hyper::rt::Future;
+use hyper_tls::HttpsConnector;
+use hyper::rt::Stream;
 
 use interpolator;
 
@@ -70,17 +76,17 @@ impl Request {
     }
   }
 
-  fn send_request(&self, context: &mut HashMap<String, Yaml>, responses: &mut HashMap<String, serde_json::Value>) -> (Response, f64) {
-    let ssl = NativeTlsClient::new().unwrap();
-    let connector = HttpsConnector::new(ssl);
-    let client = Client::with_connector(connector);
+  fn send_request(&self, context: &mut HashMap<String, Yaml>, responses: &mut HashMap<String, serde_json::Value>) -> (Response<Body>, f64) {
+    //let ssl = NativeTlsClient::new().unwrap();
+    //let native_connector = NativeTlsConnector::new().unwrap();
+    //let connector = TlsConnector::from(native_connector);
+    let https = HttpsConnector::new(4).expect("TLS initialization failed");
+    let client = Client::builder().build::<_, Body>(https);
 
     let begin = time::precise_time_s();
 
     let interpolated_url;
     let interpolated_body;
-    let request;
-
     // Resolve the url
     {
       let interpolator = interpolator::Interpolator::new(context, responses);
@@ -89,53 +95,56 @@ impl Request {
 
     // Method
     let method = match self.method.to_uppercase().as_ref() {
-      "GET" => Method::Get,
-      "POST" => Method::Post,
-      "PUT" => Method::Put,
-      "PATCH" => Method::Patch,
-      "DELETE" => Method::Delete,
+      "GET" => Method::GET,
+      "POST" => Method::POST,
+      "PUT" => Method::PUT,
+      "PATCH" => Method::PATCH,
+      "DELETE" => Method::DELETE,
       _ => panic!("Unknown method '{}'", self.method),
     };
 
     // Body
-    if let Some(body) = self.body.as_ref() {
-      // Resolve the body
-      let interpolator = interpolator::Interpolator::new(context, responses);
-      interpolated_body = interpolator.resolve(body).to_owned();
+    let mut request_builder = http::Request::builder();
 
-      request = client
-        .request(method, &interpolated_url)
-        .body(&interpolated_body);
-    } else {
-      request = client.request(method, &interpolated_url);
-    }
+    request_builder
+      .uri(&interpolated_url)
+      .method(method);
 
     // Headers
-    let mut headers = Headers::new();
-    headers.set(UserAgent(USER_AGENT.to_string()));
+    request_builder.header("User-Agent", USER_AGENT.to_string());
 
     for (key, val) in self.headers.iter() {
       // Resolve the body
       let interpolator = interpolator::Interpolator::new(context, responses);
       let interpolated_header = interpolator.resolve(val).to_owned();
 
-      headers.set_raw(key.to_owned(), vec![interpolated_header.clone().into_bytes()]);
+      request_builder.header(HeaderName::from_bytes(key.as_bytes()).unwrap(), interpolated_header.clone().as_bytes());
     }
 
     if let Some(cookie) = context.get("cookie") {
-      headers.set(Cookie(vec![String::from(cookie.as_str().unwrap())]));
+      request_builder.header("cookie", String::from(cookie.as_str().unwrap()));
     }
 
-    let response_result = request.headers(headers).send();
+    let mut request;
+    if let Some(body) = self.body.as_ref() {
+      let interpolator = interpolator::Interpolator::new(context, responses);
+      interpolated_body = interpolator.resolve(body);
+      request = request_builder.body(Body::from(interpolated_body));
+    } 
+    else {
+      request = request_builder.body(Body::from(""));
+    }
 
-    if let Err(e) = response_result {
+    let response_result = client.request(request.unwrap()).wait().unwrap();
+
+    /*if let Err(e) = response_result {
       panic!("Error connecting '{}': {:?}", interpolated_url, e);
-    }
+    }*/
 
-    let response = response_result.unwrap();
+    let response = response_result;
     let duration_ms = (time::precise_time_s() - begin) * 1000.0;
 
-    println!("{:width$} {} {} {}{}", self.name.green(), interpolated_url.blue().bold(), response.status.to_string().yellow(), duration_ms.round().to_string().cyan(), "ms".cyan(), width=25);
+    println!("{:width$} {} {} {}{}", self.name.green(), interpolated_url.blue().bold(), response.status().to_string().yellow(), duration_ms.round().to_string().cyan(), "ms".cyan(), width=25);
 
     (response, duration_ms)
   }
@@ -149,19 +158,17 @@ impl Runnable for Request {
 
     let (mut response, duration_ms) = self.send_request(context, responses);
 
-    reports.push(Report { name: self.name.to_owned(), duration: duration_ms, status: response.status.to_u16() });
+    reports.push(Report { name: self.name.to_owned(), duration: duration_ms, status: response.status().as_u16() });
 
-    if let Some(&SetCookie(ref cookies)) = response.headers.get::<SetCookie>() {
+    /*if let Some(&SetCookie(ref cookies)) = response.headers.get::<SetCookie>() {
       if let Some(cookie) = cookies.iter().next() {
         let value = String::from(cookie.split(";").next().unwrap());
         context.insert("cookie".to_string(), Yaml::String(value));
       }
-    }
+    }*/
 
     if let Some(ref key) = self.assign {
       let mut data = String::new();
-
-      response.read_to_string(&mut data).unwrap();
 
       let value: serde_json::Value = serde_json::from_str(&data).unwrap();
 

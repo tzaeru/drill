@@ -7,6 +7,9 @@ extern crate csv;
 extern crate regex;
 extern crate clap;
 extern crate serde_json;
+extern crate tokio_tls;
+extern crate native_tls;
+extern crate hyper_tls;
 
 mod config;
 mod interpolator;
